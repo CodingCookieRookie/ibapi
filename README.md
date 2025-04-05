@@ -1,4 +1,5 @@
 # Interactive Brokers API - GoLang Implement
+## Credits: This project is based on the work by github.com/hadrianl/ibapi. 
 
 <img
 style="display: block; margin: 0 auto;"
@@ -25,95 +26,6 @@ Implement `IbWrapper` to handle datas delivered via tws or gateway, `Wrapper` in
 3. **handshake** with TWS or Gateway
 4. **run** the loop
 5. do some **request**
-
-### Demo 1
-
-```golang
-import (
-    . "github.com/hadrianl/ibapi"
-    "time"
-)
-
-func main(){
-    // internal api log is zap log, you could use GetLogger to get the logger
-    // besides, you could use SetAPILogger to set you own log option
-    // or you can just use the other logger  
-    log := GetLogger().Sugar()
-    defer log.Sync()
-    // implement your own IbWrapper to handle the msg delivered via tws or gateway
-    // Wrapper{} below is a default implement which just log the msg 
-    ic := NewIbClient(&Wrapper{})
-
-    // tcp connect with tws or gateway
-    // fail if tws or gateway had not yet set the trust IP
-    if err := ic.Connect("127.0.0.1", 4002, 0);err != nil {
-        log.Panic("Connect failed:", err)
-    }
-
-    // handshake with tws or gateway, send handshake protocol to tell tws or gateway the version of client
-    // and receive the server version and connection time from tws or gateway.
-    // fail if someone else had already connected to tws or gateway with same clientID
-    if err := ic.HandShake();err != nil {
-        log.Panic("HandShake failed:", err)
-    }
-
-    // make some request, msg would be delivered via wrapper.
-    // req will not send to TWS or Gateway until ic.Run()
-    // you could just call ic.Run() before these
-    ic.ReqCurrentTime()
-    ic.ReqAutoOpenOrders(true)
-    ic.ReqAccountUpdates(true, "")
-    ic.ReqExecutions(ic.GetReqID(), ExecutionFilter{})
-
-    // start to send req and receive msg from tws or gateway after this
-    ic.Run()
-    <-time.After(time.Second * 60)
-    ic.Disconnect()
-}
-
-```
-
-### Demo 2 with context
-
-```golang
-import (
-    . "github.com/hadrianl/ibapi"
-    "time"
-    "context"
-)
-
-func main(){
-    var err error
-    SetAPILogger(zap.NewDevelopmentConfig()) // log is default for production(json encode, info level), set to development(console encode, debug level) here
-    log := GetLogger().Sugar()
-    defer log.Sync()
-    ibwrapper := &Wrapper{}
-    ctx, _ := context.WithTimeout(context.Background(), time.Second*30)
-    ic := NewIbClient(ibwrapper)
-    ic.SetContext(ctx)
-    err = ic.Connect("127.0.0.1", 4002, 0)
-    if err != nil {
-        log.Panic("Connect failed:", err)
-    }
-
-    err = ic.HandShake()
-    if err != nil {
-        log.Panic("HandShake failed:", err)
-    }
-
-    ic.ReqCurrentTime()
-    ic.ReqAutoOpenOrders(true)
-    ic.ReqAccountUpdates(true, "")
-    ic.ReqExecutions(ic.GetReqID(), ExecutionFilter{})
-
-    ic.Run()
-    err = ic.LoopUntilDone()  // block until ctx or ic is done
-    log.Info(err)
-}
-
-```
-
----
 
 ## Reference
 
