@@ -127,24 +127,26 @@ func (ic *IbClient) Connect(host string, port int, clientID int64) error {
 */
 func (ic *IbClient) Disconnect() error {
 	log.Debug("close terminatedSignal chan")
-	close(ic.terminatedSignal) // close make the term signal chan unblocked
+	close(ic.terminatedSignal)
+
+	// Set read deadline immediately so scanner.Scan() in goReceive() unblocks
+	if ic.conn != nil {
+		ic.conn.SetReadDeadline(time.Now())
+	}
+
+	ic.wg.Wait()
 
 	if err := ic.conn.disconnect(); err != nil {
 		return err
 	}
 
-	ic.wg.Wait()
+	if len(ic.done) > 0 {
+		ic.done <- true
+	}
 
-	// should not reconnect IbClient in ConnectionClosed
-	// because reset would be called right after ConnectionClosed
-	defer func() {
-		if len(ic.done) > 0 {
-			ic.done <- true
-		}
-	}()
-	defer ic.reset()
-	defer ic.wrapper.ConnectionClosed()
-	defer log.Info("Disconnected!")
+	ic.wrapper.ConnectionClosed()
+	ic.reset()
+	log.Info("Disconnected!")
 
 	return ic.err
 }
@@ -2902,6 +2904,7 @@ func (ic *IbClient) CancelWshEventData(reqID int64) {
 
 	ic.reqChan <- msg
 }
+
 //--------------------------three major goroutine -----------------------------------------------------
 /*
 1.goReceive scan a whole msg bytes and put it into msgChan
@@ -2909,7 +2912,7 @@ func (ic *IbClient) CancelWshEventData(reqID int64) {
 3.goRequest create a select loop to get request from reqChan and send it to tws or ib gateway
 */
 
-//goRequest will get the req from reqChan and send it to TWS
+// goRequest will get the req from reqChan and send it to TWS
 func (ic *IbClient) goRequest() {
 	log.Debug("requester start")
 	defer func() {
@@ -2950,23 +2953,22 @@ requestLoop:
 
 }
 
-//goReceive receive the msg from the socket, get the fields and put them into msgChan
-//goReceive handle the msgBuf which is different from the offical.Not continuously read, but split first and then decode
+// goReceive receive the msg from the socket, get the fields and put them into msgChan
+// goReceive handle the msgBuf which is different from the offical.Not continuously read, but split first and then decode
 func (ic *IbClient) goReceive() {
-	log.Debug("receiver start")
 	defer func() {
 		if errMsg := recover(); errMsg != nil {
-			err := errors.New(errMsg.(string))
-			log.Error("receiver got unexpected error", zap.Error(err))
-			ic.err = err
-			// ic.Disconnect()
-			log.Debug("try to restart receiver")
-			go ic.goReceive()
-		} else {
 			select {
 			case <-ic.terminatedSignal:
+				// Shutdown in progress, ignore
+				return
 			default:
-				ic.Disconnect()
+				// Only handles recover if not shutting down
+				err := errors.New(errMsg.(string))
+				log.Error("receiver got unexpected error", zap.Error(err))
+				ic.err = err
+				log.Debug("try to restart receiver")
+				go ic.goReceive()
 			}
 		}
 	}()
@@ -3001,7 +3003,7 @@ func (ic *IbClient) goReceive() {
 
 }
 
-//goDecode decode the fields received from the msgChan
+// goDecode decode the fields received from the msgChan
 func (ic *IbClient) goDecode() {
 	log.Debug("decoder start")
 	defer func() {
